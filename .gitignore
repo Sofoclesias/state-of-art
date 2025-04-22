@@ -2,7 +2,9 @@
 .*/
 bib/
 data/*.txt
-data/logs/*.txt
+data/proxies/
+data/tempid/
+data/templog/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
