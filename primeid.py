@@ -11,7 +11,7 @@ from datetime import datetime as dt
 
 sys.setrecursionlimit(100000)
 worker, nodes = sys.argv[1:]
-PATH = os.path.abspath(os.curdir)
+PATH = os.path.join(os.path.abspath(os.curdir),'data')
 
 fieldsOfStudy = [
     'Computer Science',
@@ -47,33 +47,40 @@ years = [
 ]
 
 def start_proxy_server():
-    tor_port = 9050 + int(worker)
-    dante_conf = f'''
-    logoutput: stderr
-    internal: eth0 port = {tor_port}
-    external: eth0
+    tor_port = 9050 + int(worker) + 10*int(worker)
 
-    method: username none
-    user.notprivileged: nobody
+    tor_conf = f'''SocksPort {tor_port}
+ControlPort {tor_port-1}
+DataDirectory /var/lib/tor{worker}
+Log notice file /var/log/tor{worker}.log'''
 
-    client pass {{
-        from: 0.0.0.0/0 to: 0.0.0.0/0
-        log: connect disconnect
-    }}
+    with open(os.path.join(PATH,'configs',f'tor_{worker}.conf'), 'w') as f:
+        f.write(tor_conf)
 
-    socks pass {{
-        from: 0.0.0.0/0 to: 0.0.0.0/0
-        log: connect disconnect
-    }}
-    '''
+    dante_conf = f'''logoutput: stderr
+internal: 0.0.0.0 port = {tor_port}
+external: eat5G
 
-    with open(os.path.join(PATH,'proxies',f'dante_{worker}.conf'), 'w') as f:
+method: username none
+user.notprivileged: nobody
+
+client pass {{
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}}
+
+socks pass {{
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect disconnect
+}}'''
+
+    with open(os.path.join(PATH,'configs',f'dante_{worker}.conf'), 'w') as f:
         f.write(dante_conf)
 
-    tor_command = f'tor --SocksPort {tor_port} --DataDirectory /var/lib/tor{worker}'
+    tor_command = f'sudo tor -f {os.path.join(PATH,'configs',f'tor_{worker}.conf')}'
     tor_process = subprocess.Popen(tor_command, shell=True, stdout=open(os.path.join(PATH,'proxies',f'torlog_{worker}.txt'), 'a'), stderr=open(os.path.join(PATH,'proxies',f'torerr_{worker}.txt'), 'a'))
 
-    dante_command = f'sockd -f {os.path.join(PATH,'proxies',f'dante_{worker}.conf')}'
+    dante_command = f'sudo sockd -f {os.path.join(PATH,'configs',f'dante_{worker}.conf')}'
     dante_process = subprocess.Popen(dante_command, shell=True, stdout=open(os.path.join(PATH,'proxies',f'dantelog_{worker}.txt'), 'a'), stderr=open(os.path.join(PATH,'proxies',f'danterr_{worker}.txt'), 'a'))
 
     proxy_headers = {"http":f"socks5h://127.0.0.1:{tor_port}","https":f"socks5h://127.0.0.1:{tor_port}"}
@@ -97,7 +104,7 @@ def request (url, delay=1, attempt=1, max_attempt=10, tol=60):
         response = rq.get(url,proxies=proxy,timeout=(5,15))
         if response.status_code == 200:
             # Retorno de los resultados de la API.
-            with open(f'logs/delaylog_{worker}.txt','a') as f:
+            with open(f'data/logs/delaylog_{worker}.txt','a') as f:
                 f.write(f"{delay},{attempt},{url}\n")
                 # TEMPORAL: Quiero analizar la saturación de requests al API en su rate limit de 1000 resultados.
 
@@ -109,21 +116,21 @@ def request (url, delay=1, attempt=1, max_attempt=10, tol=60):
             return request(url, delay, attempt=attempt+1, max_attempt=max_attempt)
         else:
             # Registro de error y devolución de bandera 'None'.
-            with open(f'logs/erroridslog_{worker}.txt','a') as f:
+            with open(f'data/logs/erroridslog_{worker}.txt','a') as f:
                 f.write(f'ERROR {response.status_code} at attempt {attempt}: {url}\n')
             
             return None
         
     # Detiene la función hasta que se haya reconexión.
     except rq.exceptions.RequestException as e:
-        with open(f'logs/connectionlog_{worker}.txt','a') as f:
-            f.write(f'[{dt.now()}] Lost connection. Awaiting reconnection. ({e})')
+        with open(f'data/logs/connectionlog_{worker}.txt','a') as f:
+            f.write(f'[{dt.now()}] Lost connection. Awaiting reconnection. ({e})\n')
         
         while not connection_test():
             sleep(tol)
 
-        with open(f'logs/connectionlog_{worker}.txt','a') as f:
-            f.write(f'[{dt.now()}] Reconnected.')
+        with open(f'data/logs/connectionlog_{worker}.txt','a') as f:
+            f.write(f'[{dt.now()}] Reconnected.\n')
 
         return request(url,delay=delay,attempt=attempt,max_attempt=max_attempt,tol=tol)
     
@@ -145,8 +152,8 @@ def fetchIDs(field,year,token=None,pags=None):
             pags.update(1)
         
         # Registro de IDs
-        with open(f'ids/paperIds_{worker}.txt','a') as f:
-            f.write('\n'.join(re.findall(r"\{'paperId': ('.+?)', 'title': '.+?'\}",str(response['data']),re.DOTALL)) + '\n')
+        with open(f'data/ids/paperIds_{worker}.txt','a') as f:
+            f.write('\n'.join(re.findall(r"\{'paperId': .+?, 'title': '.+?'\}",str(response['data']),re.DOTALL)) + '\n')
         
         # Encontrar nuevo token de paginación, si hay, y continuar recursivamente.
         next_token = response.get('token') 

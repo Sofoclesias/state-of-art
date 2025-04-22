@@ -2,7 +2,8 @@
 .*/
 bib/
 data/*.txt
-data/logs/*.txt
+data/*/*.txt
+data/*/*.conf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
