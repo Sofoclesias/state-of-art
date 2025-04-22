@@ -47,10 +47,10 @@ years = [
 ]
 
 def start_proxy_server():
-    tor_port = 9050 + int(worker) + 10*int(worker)
+    tor_port = 9050 + int(worker) + 10*int(worker) 
 
     tor_conf = f'''SocksPort {tor_port}
-ControlPort {tor_port-1}
+ControlPort {tor_port-1+(6 if int(worker)==1 else 0)}
 DataDirectory /var/lib/tor{worker}
 Log notice file /var/log/tor{worker}.log'''
 
