@@ -9,7 +9,7 @@ import numpy as np
 import subprocess
 from datetime import datetime as dt
 
-sys.setrecursionlimit(100000)
+sys.setrecursionlimit(10000000)
 worker, nodes = sys.argv[1:]
 PATH = os.path.join(os.path.abspath(os.curdir),'data')
 
@@ -55,18 +55,18 @@ ControlPort {tor_port-1}
 DataDirectory /var/lib/tor{worker}
 Log notice file /var/log/tor{worker}.log'''
 
-    with open(os.path.join(PATH,'configs',f'tor_{worker}.conf'), 'w') as f:
+    with open(os.path.join(PATH,'proxies','configs',f'tor_{worker}.conf'), 'w') as f:
         f.write(tor_conf)
 
-    tor_command = f'sudo tor -f {os.path.join(PATH,'configs',f'tor_{worker}.conf')}'
-    tor_process = subprocess.Popen(tor_command, shell=True, stdout=open(os.path.join(PATH,'proxies',f'torlog_{worker}.txt'), 'a'), stderr=open(os.path.join(PATH,'proxies',f'torerr_{worker}.txt'), 'a'))
+    tor_command = f'sudo tor -f {os.path.join(PATH,'proxies','configs',f'tor_{worker}.conf')}'
+    tor_process = subprocess.Popen(tor_command, shell=True, stdout=open(os.path.join(PATH,'proxies','logs',f'tor{worker}.txt'), 'a'), stderr=open(os.path.join(PATH,'proxies','errors',f'tor{worker}.txt'), 'a'))
 
     proxy_headers = {"http":f"socks5h://127.0.0.1:{tor_port}","https":f"socks5h://127.0.0.1:{tor_port}"}
 
     print(f"[Proxy {worker} started on port {tor_port}]\n")
     return proxy_headers,tor_process
 
-proxy,tor = start_proxy_server()
+proxy, tor = start_proxy_server()
 
 def connection_test():
     try:
@@ -77,40 +77,48 @@ def connection_test():
     
 def request (url, delay=1, attempt=1, max_attempt=10, tol=60):
     # Asegura continuación ante saturaciones de red.
+    # Es el único que necesariamente debe tener recursividad. No puede parar hasta que consiga resultados.
+    os.system(f'mv data/proxies/HEALTH_{worker}_* data/proxies/HEALTH_{worker}_{attempt}')
     try:
         sleep(delay)
         response = rq.get(url,proxies=proxy,timeout=(5,15))
         if response.status_code == 200:
             # Retorno de los resultados de la API.
-            with open(f'data/logs/delaylog_{worker}.txt','a') as f:
-                f.write(f"{delay},{attempt},{url}\n")
-                # TEMPORAL: Quiero analizar la saturación de requests al API en su rate limit de 1000 resultados.
-
+            os.system(f'mv data/proxies/HEALTH_{worker}_* data/proxies/HEALTH_{worker}_0')
+            with open(f'data/templog/delays_{worker}.txt','a') as f:
+                f.write(f"{dt.now()},{worker},{re.findall(r'&fieldsOfStudy=(.+?)&',url,re.DOTALL)[0]},{re.findall(r'&year=([^&]+)',url,re.DOTALL)[0]},{attempt},{delay}\n")
             return response.json()
         elif response.status_code != 200 and attempt!=max_attempt:
             # Principalmente maneja errores 429 y 504.
             # Si yo supero el rate limit o el server no responde a tiempo, se aplica exponential backoff + reintento recursivo.
-            delay = min(2 ** attempt + random.uniform(0,1), 1024)
+            delay = min((2 ** attempt + random.uniform(0,1))/2, 1024)
+            
+            
             return request(url, delay, attempt=attempt+1, max_attempt=max_attempt)
         else:
-            # Registro de error y devolución de bandera 'None'.
-            with open(f'data/logs/erroridslog_{worker}.txt','a') as f:
-                f.write(f'ERROR {response.status_code} at attempt {attempt}: {url}\n')
-            
-            return None
+            raise BrokenPipeError('Max retries reached.')
         
     # Detiene la función hasta que se haya reconexión.
     except rq.exceptions.RequestException as e:
-        with open(f'data/logs/connectionlog_{worker}.txt','a') as f:
-            f.write(f'[{dt.now()}] Lost connection. Awaiting reconnection. ({e})\n')
+        with open(f'data/templog/connections_{worker}.txt','a') as f:
+            f.write(f'[{dt.now()} - {worker}] Lost connection. Awaiting reconnection. ({e})\n')
         
         while not connection_test():
             sleep(tol)
 
-        with open(f'data/logs/connectionlog_{worker}.txt','a') as f:
-            f.write(f'[{dt.now()}] Reconnected.\n')
+        with open(f'data/templog/connections_{worker}.txt','a') as f:
+            f.write(f'[{dt.now()} - {worker}] Reconnected.\n')
 
         return request(url,delay=delay,attempt=attempt,max_attempt=max_attempt,tol=tol)
+    
+    except:
+        # Registro de error y devolución de bandera 'None'. Luego, reinicia.
+        # TO-DO: probablemente hacerlo con concurrencia o asíncrono, de modo que espere si es que no hay internet.
+        with open(f'data/logs/error_{worker}.txt','a') as f:
+            f.write(f'ERROR {response.status_code} at attempt {attempt}: {url}\n')
+        
+        sleep(delay)
+        return request(url,delay=1,attempt=1,max_attempt=max_attempt,tol=tol)
     
 def stream_overview(response,field,year):
     total = response['total']
@@ -118,27 +126,27 @@ def stream_overview(response,field,year):
     
     return tqdm(total=total//1000 + 1,desc='crawled paginations',initial=1,position=1,leave=True)
 
-def fetchIDs(field,year,token=None,pags=None):
-    url = f'https://api.semanticscholar.org/graph/v1/paper/search/bulk?query=*&fieldsOfStudy={field}&year={year}' + (f'&token={token}' if token!=None else '')
-    response = request(url,max_attempt=20)
-    
-    if response is not None:        
-        # Solo corrido en la primera iteración. De ahí, deriva la barra de progreso recursivamente.
-        if pags is None:
+def fetchIDs(field,year):
+    token = 'FIRST'
+    while token:
+        # Construcción de la solicitud HTTP a la API
+        url = f'https://api.semanticscholar.org/graph/v1/paper/search/bulk?query=*&fieldsOfStudy={field}&year={year}' + (f'&token={token}' if token != 'FIRST' else '')
+        response = request(url,max_attempt=30)
+
+        # Solo corrido en la primera iteración. De ahí, deriva la barra de progreso.
+        if token == 'FIRST':
             pags = stream_overview(response,field,year)
         else:
             pags.update(1)
-        
+
         # Registro de IDs
-        with open(f'data/ids/paperIds_{worker}.txt','a') as f:
+        with open(f'data/tempid/paperIds_{worker}.txt','a') as f:
             f.write('\n'.join(re.findall(r"\{'paperId': .+?, 'title': '.+?'\}",str(response['data']),re.DOTALL)) + '\n')
         
-        # Encontrar nuevo token de paginación, si hay, y continuar recursivamente.
-        next_token = response.get('token') 
-        if next_token:
-            fetchIDs(field,year,token=next_token,pags=pags)
-        else:
-            pags.close()
+        # Búsqueda de siguiente token. Devuelve un string si existe; si no, None (con lo que se rompe el bucle). 
+        token = response.get('token')
+    
+    pags.close()
 
 if __name__ == '__main__':
     fields = fieldsOfStudy[np.linspace(0,len(fieldsOfStudy),int(nodes)+1,dtype=int)[int(worker)]:np.linspace(0,len(fieldsOfStudy),int(nodes)+1,dtype=int)[int(worker)+1]]
@@ -148,11 +156,12 @@ if __name__ == '__main__':
             for year in years:
                 fetchIDs(field,year)
                 pbar.update(1)
+                print('\n')
 
     print('Finished ID retrieval.')
 
     tor.terminate()
     tor.wait()
 
-    print('Dante and Tor process ended.')
+    print('Tor process ended.')
     
