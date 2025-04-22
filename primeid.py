@@ -78,13 +78,11 @@ def connection_test():
 def request (url, delay=1, attempt=1, max_attempt=10, tol=60):
     # Asegura continuación ante saturaciones de red.
     # Es el único que necesariamente debe tener recursividad. No puede parar hasta que consiga resultados.
-    os.system(f'mv data/proxies/HEALTH_{worker}_* data/proxies/HEALTH_{worker}_{attempt} 2>/dev/null')
     try:
         sleep(delay)
         response = rq.get(url,proxies=proxy,timeout=(5,15))
         if response.status_code == 200:
             # Retorno de los resultados de la API.
-            os.system(f'mv data/proxies/HEALTH_{worker}_* data/proxies/HEALTH_{worker}_0 2>/dev/null')
             with open(f'data/templog/delays_{worker}.txt','a') as f:
                 f.write(f"{dt.now()},{worker},{re.findall(r'&fieldsOfStudy=(.+?)&',url,re.DOTALL)[0]},{re.findall(r'&year=([^&]+)',url,re.DOTALL)[0]},{attempt},{delay}\n")
             return response.json()

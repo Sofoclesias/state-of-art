@@ -14,12 +14,12 @@ if ! [[ "$num_processes" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+sudo killall tor
 rm -rf data/
 
 mkdir -p data/{logs,templog,proxies,tempid} data/proxies/{configs,errors,logs}
 
 for ((i=0; i<$num_processes; i++)); do
-    touch "data/proxies/HEALTH_${i}_0"
     kitty -e bash -c "source .venv/bin/activate && python3 primeid.py ${i} ${num_processes}" &
 done
 
