@@ -40,55 +40,33 @@ fieldsOfStudy = [
 ]
 
 years = [
-    '-2010',
+    '-2000',
+    '2001-2010',
     '2011-2016',
     '2017-2021',
     '2022-'
 ]
 
 def start_proxy_server():
-    tor_port = 9050 + int(worker) + 10*int(worker) 
+    tor_port = 9050 + int(worker) + 10*int(worker) +(6 if int(worker)==1 else 0)
 
     tor_conf = f'''SocksPort {tor_port}
-ControlPort {tor_port-1+(6 if int(worker)==1 else 0)}
+ControlPort {tor_port-1}
 DataDirectory /var/lib/tor{worker}
 Log notice file /var/log/tor{worker}.log'''
 
     with open(os.path.join(PATH,'configs',f'tor_{worker}.conf'), 'w') as f:
         f.write(tor_conf)
 
-    dante_conf = f'''logoutput: stderr
-internal: 0.0.0.0 port = {tor_port}
-external: eat5G
-
-method: username none
-user.notprivileged: nobody
-
-client pass {{
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    log: connect disconnect
-}}
-
-socks pass {{
-    from: 0.0.0.0/0 to: 0.0.0.0/0
-    log: connect disconnect
-}}'''
-
-    with open(os.path.join(PATH,'configs',f'dante_{worker}.conf'), 'w') as f:
-        f.write(dante_conf)
-
     tor_command = f'sudo tor -f {os.path.join(PATH,'configs',f'tor_{worker}.conf')}'
     tor_process = subprocess.Popen(tor_command, shell=True, stdout=open(os.path.join(PATH,'proxies',f'torlog_{worker}.txt'), 'a'), stderr=open(os.path.join(PATH,'proxies',f'torerr_{worker}.txt'), 'a'))
-
-    dante_command = f'sudo sockd -f {os.path.join(PATH,'configs',f'dante_{worker}.conf')}'
-    dante_process = subprocess.Popen(dante_command, shell=True, stdout=open(os.path.join(PATH,'proxies',f'dantelog_{worker}.txt'), 'a'), stderr=open(os.path.join(PATH,'proxies',f'danterr_{worker}.txt'), 'a'))
 
     proxy_headers = {"http":f"socks5h://127.0.0.1:{tor_port}","https":f"socks5h://127.0.0.1:{tor_port}"}
 
     print(f"[Proxy {worker} started on port {tor_port}]\n")
-    return proxy_headers,tor_process,dante_process
+    return proxy_headers,tor_process
 
-proxy,tor,dante = start_proxy_server()
+proxy,tor = start_proxy_server()
 
 def connection_test():
     try:
@@ -176,7 +154,5 @@ if __name__ == '__main__':
     tor.terminate()
     tor.wait()
 
-    dante.terminate()
-    dante.wait()
     print('Dante and Tor process ended.')
     
