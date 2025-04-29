@@ -112,6 +112,7 @@ if __name__ == "__main__":
     os.system('sudo killall tor')
     os.system(r'mkdir -p data/retrieval/{error,log,proxies} data/retrieval/proxies/{error,log}')
 
+    initTor(int(threads))
     manager = ThreadManager(generator(path),N=int(threads))
     manager.start()
         
